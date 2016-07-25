@@ -99,6 +99,32 @@ class User extends WebService
     }
 
     /**
+     * Post request on api/v1/user_signup to create a user account
+     * @access public
+     * @param Array $params Params
+     * @return String
+     */
+    public function postUserSignup($params)
+    {
+        $this->setOptions(array('action' => 'api/v1/user_signup'));
+        $this->param = array_merge($this->param, $params);
+        $this->setPost();
+        $source = parent::doRequest();
+        if ($source !== false) {
+            parent::parseResponse($source);
+            // The request is ok, we return trimed response
+            $nodes = $this->xpath->query('/user/response');
+            if (isset($nodes->item(0)->nodeValue)) {
+                return trim($nodes->item(0)->nodeValue);
+            } else {
+                return trim($nodes->item);
+            }
+        } else {
+            return $this->resp_error;
+        }
+    }
+
+    /**
      * Gets information about user from server.
      * @access public
      * @return Void

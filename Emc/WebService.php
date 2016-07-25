@@ -53,7 +53,7 @@ class WebService
      * @access protected
      * @var string
      */
-    protected $api_version = '1.3.1';
+    protected $api_version = '1.3.2';
 
     /**
      * A private variable which stocks options to pass into curl query.
@@ -187,6 +187,11 @@ class WebService
      * @var string
      */
     protected $lang_code = 'en-US';
+    /**
+     * [$pass_phrase description]
+     * @var string
+     */
+    protected $pass_phrase = 'T+sGKCHeRddqiGb+tot/q2hzGRh5oP3GlB1NEMHEGTw=';
 
     /**
      * Class constructor.
@@ -318,7 +323,6 @@ class WebService
         foreach ($ch as $k => $c) {
             $data[$k] = curl_multi_getcontent($c);
             curl_multi_remove_handle($mh, $c);
-            file_put_contents($this->uploadDir . '/return.xml', $data[$k]);
         }
 
         foreach ($ch as $k => $c) {
@@ -331,15 +335,13 @@ class WebService
                 return false;
             } elseif ($curl_info['http_code'] != '200' && $curl_info['http_code'] !=
               '400' && $curl_info['http_code'] != '401') {
-                $this->resp_error = true;
-                $this->resp_errors_list[] = array('code' => 'http_error_' . $curl_info['http_code'],
+                $this->resp_errors_list[$k][] = array('code' => 'http_error_' . $curl_info['http_code'],
                     'url' => $curl_info['url'],
                     'message' =>
                       'Echec lors de l\'envoi de la requête, le serveur n\'a pas pu répondre correctement (erreur :' .
                         $curl_info['http_code'] . ')');
             } elseif (trim($content_type[0]) != 'application/xml') {
-                $this->resp_error = true;
-                $this->resp_errors_list[] = array('code' => 'bad_response_format',
+                $this->resp_errors_list[$k][] = array('code' => 'bad_response_format',
                     'url' => $curl_info['url'],
                     'message' =>
                       'Echec lors de l\'envoi de la requête, le serveur a envoyé une réponse invalide ' .
@@ -365,17 +367,20 @@ class WebService
             CURLOPT_RETURNTRANSFER => 1,
             CURLOPT_SSL_VERIFYHOST => $this->ssl_check['host'],
             CURLOPT_URL => $this->server . $options['action'] . $this->get_params,
-            CURLOPT_HTTPHEADER => array(
+            CURLOPT_CAINFO => dirname(__FILE__) . '/../ca/ca-bundle.crt');
+
+        if (!empty($this->auth['user']) && !empty($this->auth['pass']) && !empty($this->auth['key'])) {
+            $this->options[CURLOPT_HTTPHEADER] = array(
                 'Authorization: ' . base64_encode($this->auth['user'] . ':' . $this->auth['pass']) . '',
                 'access_key : ' . $this->auth['key'] . '',
                 'Accept-Language: '.$this->lang_code,
-                'Api-Version: '.$this->api_version),
-            CURLOPT_CAINFO => dirname(__FILE__) . '/../ca/ca-bundle.crt');
-
+                'Api-Version: '.$this->api_version);
+        }
         if ($this->timeout != null) {
             $this->options[CURLOPT_TIMEOUT_MS] = $this->timeout;
         }
         $this->param['action'] = $options['action'];
+
     }
 
     /**
@@ -507,18 +512,28 @@ class WebService
     {
         $i = 0;
         $this->xpath = array();
+        $return_xml = new \DOMDocument('1.0', 'UTF-8');
+        $return_wrapper = new \DOMElement('multirequest_wrapper');
+        $return_xml->appendChild($return_wrapper);
 
         foreach ($documents as $document) {
             $dom_cl = new \DOMDocument();
             $dom_cl->loadXML($document);
             $this->xpath[$i] = new \DOMXPath($dom_cl);
+            $target_node = $dom_cl->documentElement;
+            $return_wrapper->appendChild($return_xml->importNode($target_node, true));
 
-            if ($this->hasErrors($this->xpath[$i])) {
-                $this->setResponseErrors($this->xpath[$i]);
+            if ($this->hasErrorsMulti($this->xpath[$i])) {
+                $errors = $this->xpath[$i]->evaluate('/error');
+                foreach ($errors as $e => $error) {
+                    $this->resp_errors_list[$i][$e] = array('code' => $this->xpath[$i]->evaluate('code', $error)->item(0)->nodeValue
+                    , 'message' => $this->xpath[$i]->evaluate('message', $error)->item(0)->nodeValue);
+                }
             }
 
             $i++;
         }
+        $return_xml->save($this->uploadDir . '/return.xml');
     }
 
     /**
@@ -583,6 +598,21 @@ class WebService
         $xpath = $xpath ? $xpath : $this->xpath;
         if ((int)$xpath->evaluate('count(/error)') > 0) {
             $this->resp_error = true;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Function detects if xml document has error tag for curl multi request.
+     * @access private
+     * @param object xml document (if curl multi request)
+     * @return boolean true if xml document has error tag, false if it hasn't.
+     */
+    private function hasErrorsMulti($xpath = false)
+    {
+        $xpath = $xpath ? $xpath : $this->xpath;
+        if ((int)$xpath->evaluate('count(/error)') > 0) {
             return true;
         }
         return false;
@@ -657,5 +687,53 @@ class WebService
         return array( 'URL called'=> $this->server.$this->param['action'],
                       'Params'=> $this->param
                       );
+    }
+
+    /**
+     * Function to encrypt password
+     *
+     * @access public
+     * @param String $string The password
+     * @return String
+     */
+    public function encryptPassword($string)
+    {
+        $salt = substr($this->pass_phrase, 0, 16);
+        $iv = substr($this->pass_phrase, 16, 16);
+
+        $key = $this->pbkdf2('sha1', $this->pass_phrase, $salt, 100, 32, true);
+        return base64_encode(openssl_encrypt($string, 'aes-128-cbc', $key, true, $iv));
+    }
+
+    public function pbkdf2($algorithm, $password, $salt, $count, $key_length, $raw_output = false)
+    {
+        $algorithm = strtolower($algorithm);
+        if (!in_array($algorithm, hash_algos(), true)) {
+            throw new Exception('PBKDF2 ERROR: Invalid hash algorithm.');
+        }
+
+        if ($count <= 0 || $key_length <= 0) {
+            throw new Exception('PBKDF2 ERROR: Invalid parameters.');
+        }
+
+        $hash_length = strlen(hash($algorithm, '', true));
+        $block_count = ceil($key_length / $hash_length);
+        for ($i = 1; $i <= $block_count; $i++) {
+            // $i encoded as 4 bytes, big endian.
+            $last = $salt . pack('N', $i);
+            // first iteration
+            $last = $xorsum = hash_hmac($algorithm, $last, $password, true);
+            // perform the other $count - 1 iterations
+            for ($j = 1; $j < $count; $j++) {
+                $xorsum ^= ($last = hash_hmac($algorithm, $last, $password, true));
+            }
+            $output = '';
+            $output .= $xorsum;
+            if ($raw_output) {
+                return substr($output, 0, $key_length);
+            } else {
+                return bin2hex(substr($output, 0, $key_length));
+            }
+        }
     }
 }

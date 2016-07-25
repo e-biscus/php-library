@@ -12,10 +12,10 @@ require_once(EMC_PARENT_DIR.'layout/header.php');
 // shipper and recipient's address
 $from = array(
     'pays' => 'FR', // must be an ISO code, set get_country example on how to get codes
-    'code_postal' => '38400',
-    'ville' => "Saint Martin d'Hères",
+    'code_postal' => '75002',
+    'ville' => "Paris",
     'type' => 'entreprise',
-    'adresse' => '13 Rue Martin Luther King'
+    'adresse' => '15 rue marsollier'
 );
 
 $dest =  isset($_GET['dest']) ? $_GET['dest'] : null;
@@ -42,10 +42,10 @@ switch ($dest) {
 
 
 /*
- * $quot_params contains all additional parameters for your request, it includes filters or offer's options
+ * $additionalParams contains all additional parameters for your request, it includes filters or offer's options
  * A list of all possible parameters is available here: http://ecommerce.envoimoinscher.com/api/documentation/commandes/
  */
-$quot_params = array(
+$additionalParams = array(
     'collecte' => date("Y-m-d"),
     'delay' => 'aucun',
     'content_code' => 10120, // List of the available codes at samples/get_categories.php > List of contents
@@ -54,7 +54,7 @@ $quot_params = array(
 
 
 /* Optionally you can define which carriers you want to quote if you don't want to quote all carriers
-$quot_params['offers'] = array(
+$additionalParams['offers'] = array(
     0 => 'MONRCpourToi',
     1 => 'SOGPRelaisColis',
     2 => 'POFRColissimoAccess',
@@ -79,8 +79,7 @@ $parcels = array(
 $currency = array('EUR' => '€', 'USD'=>'$');
 
 // Prepare and execute the request
-$lib = new Quotation($from, $to, $parcels);
-$lib->getQuotation($quot_params);
+$lib = new Quotation($from, $to, $parcels, $additionalParams);
 $lib->getOffers();
 
 if (!$lib->curl_error && !$lib->resp_error) {
